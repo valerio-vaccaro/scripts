@@ -4,4 +4,4 @@ wget https://github.com/sparrowwallet/sparrow/releases/download/2.0.0/sparrow_2.
 wget https://github.com/sparrowwallet/sparrow/releases/download/2.0.0/sparrow-2.0.0-manifest.txt
 wget https://github.com/sparrowwallet/sparrow/releases/download/2.0.0/sparrow-2.0.0-manifest.txt.asc
 
-sudo dpkg -i sparrow_2.0.0-1_amd64.deb
+sudo dpkg -i sparrow_2.1.3-1_amd64.deb
