@@ -1,6 +1,6 @@
 #!/bin/sh
 
-sudo apt-get install mariadb-server mariadb-client
+sudo apt install mariadb-server mariadb-client -y
 
 git clone https://github.com/mempool/mempool
 cd mempool
@@ -22,20 +22,21 @@ npm run build
 
 
 cp mempool-config.sample.json mempool-config.json # modify if needed
+# fix for debiam myslq socket
 
-npm run start
+# npm run start
 
 # or use pm2 to start
-# pm2 start "npm run start"
-# pm2 save
+pm2 start "npm run start"
+pm2 save
 
 
 cd ..
 
 cd frontend
 npm install
-npm run serve:local-prod
+# npm run serve:local-prod
 
 # or use pm2 to start
-# pm2 start "npm run serve:local-prod"
-# pm2 save
+pm2 start "npm run serve:local-prod"
+pm2 save
