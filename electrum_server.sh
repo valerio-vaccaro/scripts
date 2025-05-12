@@ -40,17 +40,20 @@ After=bitcoind.target
 [Service]
 User=bitcoin
 Group=bitcoin
-Type=forking
+Type=simple
 ExecStart=/usr/local/bin/electrs --conf /home/bitcoin/electrs_config.toml
-KillMode=process
-Restart=always
-TimeoutSec=120
+Restart=on-failure
 RestartSec=30
+Environment="RUST_BACKTRACE=1"
+# system limits
+LimitNOFILE=131072
+LimitNPROC=131072
 
 [Install]
 WantedBy=multi-user.target
 EOL"
 
+sudo systemctl daemon-reload
 sudo systemctl enable electrs
 sudo systemctl start electrs
 
