@@ -1,8 +1,8 @@
 #!/bin/sh
 
-wget https://bitcoincore.org/bin/bitcoin-core-28.1/bitcoin-28.1-x86_64-linux-gnu.tar.gz
-wget https://bitcoincore.org/bin/bitcoin-core-28.1/SHA256SUMS
-wget https://bitcoincore.org/bin/bitcoin-core-28.1/SHA256SUMS.asc
+wget https://bitcoincore.org/bin/bitcoin-core-29.0/bitcoin-29.0-x86_64-linux-gnu.tar.gz
+wget https://bitcoincore.org/bin/bitcoin-core-29.0/SHA256SUMS
+wget https://bitcoincore.org/bin/bitcoin-core-29.0/SHA256SUMS.asc
 
 sha256sum --ignore-missing --check SHA256SUMS
 
@@ -11,8 +11,8 @@ gpg --import guix.sigs/builder-keys/*
 
 gpg --verify SHA256SUMS.asc
 
-tar xzvf bitcoin-28.1-x86_64-linux-gnu.tar.gz 
-sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-28.1/bin/*
+tar xzvf bitcoin-29.0-x86_64-linux-gnu.tar.gz 
+sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-29.0/bin/*
 
 mkdir .bitcoin
 
