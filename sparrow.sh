@@ -10,3 +10,6 @@ sudo dpkg -i sparrowserver_2.3.1-1_amd64.deb
 
 rm sparrowwallet_2.3.1-1_amd64.deb
 rm sparrowserver_2.3.1-1_amd64.deb
+
+rm sparrow-2.3.1-manifest.txt
+rm sparrow-2.3.1-manifest.txt.asc
