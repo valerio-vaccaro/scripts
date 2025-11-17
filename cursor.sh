@@ -1,5 +1,5 @@
 #!/bin/sh
 
-wget https://downloader.cursor.sh/linux/deb/x64
-sudo dpkg -i x64
-rm x64
+wget https://api2.cursor.sh/updates/download/golden/linux-x64-deb/cursor/2.0
+sudo dpkg -i 2.0
+rm 2.0
