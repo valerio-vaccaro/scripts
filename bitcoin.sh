@@ -1,8 +1,10 @@
 #!/bin/sh
 
-wget https://bitcoincore.org/bin/bitcoin-core-30.0/bitcoin-30.0-x86_64-linux-gnu.tar.gz
-wget https://bitcoincore.org/bin/bitcoin-core-30.0/SHA256SUMS
-wget https://bitcoincore.org/bin/bitcoin-core-30.0/SHA256SUMS.asc
+VERSION=30.0
+
+wget https://bitcoincore.org/bin/bitcoin-core-$VERSION/bitcoin-$VERSION-x86_64-linux-gnu.tar.gz
+wget https://bitcoincore.org/bin/bitcoin-core-$VERSION/SHA256SUMS
+wget https://bitcoincore.org/bin/bitcoin-core-$VERSION/SHA256SUMS.asc
 
 sha256sum --ignore-missing --check SHA256SUMS
 
@@ -11,8 +13,11 @@ gpg --import guix.sigs/builder-keys/*
 
 gpg --verify SHA256SUMS.asc
 
-tar xzvf bitcoin-30.0-x86_64-linux-gnu.tar.gz 
-sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-30.0/bin/*
+tar xzvf bitcoin-$VERSION-x86_64-linux-gnu.tar.gz 
+sudo install -m 0755 -o root -g root -t /usr/local/bin bitcoin-$VERSION/bin/*
+
+rm bitcoin-$VERSION-x86_64-linux-gnu.tar.gz 
+rm -rf bitcoin-$VERSION
 
 mkdir .bitcoin
 
