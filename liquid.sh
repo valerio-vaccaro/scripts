@@ -1,8 +1,10 @@
 #!/bin/sh
 
-wget https://github.com/ElementsProject/elements/releases/download/elements-23.3.0/elements-23.3.0-x86_64-linux-gnu.tar.gz
-wget https://github.com/ElementsProject/elements/releases/download/elements-23.3.0/SHA256SUMS
-wget https://github.com/ElementsProject/elements/releases/download/elements-23.3.0/SHA256SUMS.asc
+VERSION=23.3.0
+
+wget https://github.com/ElementsProject/elements/releases/download/elements-$VERSION/elements-$VERSION-x86_64-linux-gnu.tar.gz
+wget https://github.com/ElementsProject/elements/releases/download/elements-$VERSION/SHA256SUMS
+wget https://github.com/ElementsProject/elements/releases/download/elements-$VERSION/SHA256SUMS.asc
 
 sha256sum --ignore-missing --check SHA256SUMS
 
@@ -11,8 +13,11 @@ sha256sum --ignore-missing --check SHA256SUMS
 
 gpg --verify SHA256SUMS.asc
 
-tar xzvf elements-23.3.0-x86_64-linux-gnu.tar.gz
-sudo install -m 0755 -o root -g root -t /usr/local/bin elements-23.3.0/bin/*
+tar xzvf elements-$VERSION-x86_64-linux-gnu.tar.gz
+sudo install -m 0755 -o root -g root -t /usr/local/bin elements-$VERSION/bin/*
+
+rm elements-$VERSION-x86_64-linux-gnu.tar.gz
+rm -rf elements-$VERSION
 
 mkdir .elements
 
