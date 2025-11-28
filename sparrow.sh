@@ -1,15 +1,17 @@
 #!/bin/sh
 
-wget https://github.com/sparrowwallet/sparrow/releases/download/2.3.1/sparrowwallet_2.3.1-1_amd64.deb
-wget https://github.com/sparrowwallet/sparrow/releases/download/2.3.1/sparrowserver_2.3.1-1_amd64.deb
-wget https://github.com/sparrowwallet/sparrow/releases/download/2.3.1/sparrow-2.3.1-manifest.txt
-wget https://github.com/sparrowwallet/sparrow/releases/download/2.3.1/sparrow-2.3.1-manifest.txt.asc
+VERSION=2.3.1
 
-sudo dpkg -i sparrowwallet_2.3.1-1_amd64.deb
-sudo dpkg -i sparrowserver_2.3.1-1_amd64.deb
+wget https://github.com/sparrowwallet/sparrow/releases/download/$VERSION/sparrowwallet_$VERSION-1_amd64.deb
+wget https://github.com/sparrowwallet/sparrow/releases/download/$VERSION/sparrowserver_$VERSION-1_amd64.deb
+wget https://github.com/sparrowwallet/sparrow/releases/download/$VERSION/sparrow-$VERSION-manifest.txt
+wget https://github.com/sparrowwallet/sparrow/releases/download/$VERSION/sparrow-$VERSION-manifest.txt.asc
 
-rm sparrowwallet_2.3.1-1_amd64.deb
-rm sparrowserver_2.3.1-1_amd64.deb
+sudo dpkg -i sparrowwallet_$VERSION-1_amd64.deb
+sudo dpkg -i sparrowserver_$VERSION-1_amd64.deb
 
-rm sparrow-2.3.1-manifest.txt
-rm sparrow-2.3.1-manifest.txt.asc
+rm sparrowwallet_$VERSION-1_amd64.deb
+rm sparrowserver_$VERSION-1_amd64.deb
+
+rm sparrow-$VERSION-manifest.txt
+rm sparrow-$VERSION-manifest.txt.asc
