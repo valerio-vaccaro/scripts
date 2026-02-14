@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION=2.3.1
+VERSION=2.4.0
 
 wget https://github.com/sparrowwallet/sparrow/releases/download/$VERSION/sparrowwallet_$VERSION-1_amd64.deb
 wget https://github.com/sparrowwallet/sparrow/releases/download/$VERSION/sparrowserver_$VERSION-1_amd64.deb
