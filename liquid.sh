@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION=23.3.0
+VERSION=23.3.2
 
 wget https://github.com/ElementsProject/elements/releases/download/elements-$VERSION/elements-$VERSION-x86_64-linux-gnu.tar.gz
 wget https://github.com/ElementsProject/elements/releases/download/elements-$VERSION/SHA256SUMS
