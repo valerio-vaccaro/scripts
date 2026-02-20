@@ -1,6 +1,6 @@
 #!/bin/sh
 
-sudo apt-get install usbip
+sudo apt-get install usbip -y
 sudo modprobe usbip_core
 sudo modprobe usbip_host
 sudo modprobe vhci-hcd
