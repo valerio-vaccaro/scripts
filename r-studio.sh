@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION=rstudio-2026.01.1-403-amd64.deb
+VERSION=rstudio-2026.04.0-526-amd64.deb
 
 sudo apt install r-base r-base-dev
 sudo apt install libssl-dev libclang-dev
