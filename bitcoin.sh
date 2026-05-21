@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION=30.2
+VERSION=31.0
 
 wget https://bitcoincore.org/bin/bitcoin-core-$VERSION/bitcoin-$VERSION-x86_64-linux-gnu.tar.gz
 wget https://bitcoincore.org/bin/bitcoin-core-$VERSION/SHA256SUMS
