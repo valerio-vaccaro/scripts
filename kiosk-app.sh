@@ -5,11 +5,52 @@ set -e
 
 if [ "$#" -lt 1 ] || [ -z "$1" ]; then
     echo "Error: No application specified." >&2
-    echo "Usage: sudo $0 <application-or-path> [kiosk-name]" >&2
+    echo "Usage: sudo $0 <application-or-path> [kiosk-name] [--bitcoin|--navy]" >&2
     exit 1
 fi
 
-KIOSK_NAME="${2:-$(/usr/bin/hostname)}"
+KIOSK_NAME=""
+BAR_BACKGROUND="#111111"
+BAR_COLOR="#ffffff"
+BAR_THEME=""
+
+shifted_args=("${@:2}")
+for arg in "${shifted_args[@]}"; do
+    case "$arg" in
+        --bitcoin)
+            if [ -n "$BAR_THEME" ]; then
+                echo "Error: Theme was specified more than once." >&2
+                exit 1
+            fi
+            BAR_THEME="bitcoin"
+            BAR_BACKGROUND="#f7931a"
+            BAR_COLOR="#ffffff"
+            ;;
+        --navy)
+            if [ -n "$BAR_THEME" ]; then
+                echo "Error: Theme was specified more than once." >&2
+                exit 1
+            fi
+            BAR_THEME="navy"
+            BAR_BACKGROUND="#001f3f"
+            BAR_COLOR="#ffffff"
+            ;;
+        -*)
+            echo "Error: Unknown option '$arg'." >&2
+            echo "Usage: sudo $0 <application-or-path> [kiosk-name] [--bitcoin|--navy]" >&2
+            exit 1
+            ;;
+        *)
+            if [ -n "$KIOSK_NAME" ]; then
+                echo "Error: Kiosk name was specified more than once." >&2
+                exit 1
+            fi
+            KIOSK_NAME="$arg"
+            ;;
+    esac
+done
+
+KIOSK_NAME="${KIOSK_NAME:-$(/usr/bin/hostname)}"
 
 if [[ "$1" == */* ]]; then
     APP_PATH=$(/usr/bin/readlink -f -- "$1" || true)
@@ -86,7 +127,6 @@ EOF
 echo "📝 Configuring Sway and Waybar..."
 /usr/bin/install -d -m 0755 /etc/kiosk /etc/sway
 /usr/bin/printf '%s\n' "$KIOSK_NAME" > /etc/kiosk/name
-/usr/bin/date '+%Y-%m-%d %H:%M:%S %Z' > /etc/kiosk/installed-at
 
 /usr/bin/cat << 'EOF' > /etc/kiosk/ip-address.sh
 #!/bin/bash
@@ -99,6 +139,32 @@ fi
 /usr/bin/printf 'IP %s\n' "$IP"
 EOF
 /usr/bin/chmod +x /etc/kiosk/ip-address.sh
+
+/usr/bin/cat << 'EOF' > /etc/kiosk/wifi-status.sh
+#!/bin/bash
+
+if ! command -v nmcli >/dev/null 2>&1; then
+    /usr/bin/printf 'WiFi unavailable\n'
+    exit 0
+fi
+
+STATUS=$(/usr/bin/nmcli -t -f WIFI general 2>/dev/null | /usr/bin/head -n 1)
+if [ "$STATUS" != "enabled" ]; then
+    /usr/bin/printf 'WiFi off\n'
+    exit 0
+fi
+
+ACTIVE=$(/usr/bin/nmcli -t -f ACTIVE,SSID,SIGNAL device wifi 2>/dev/null | /usr/bin/awk -F: '$1 == "yes" { print $2 ":" $3; exit }')
+if [ -z "$ACTIVE" ]; then
+    /usr/bin/printf 'WiFi disconnected\n'
+    exit 0
+fi
+
+SSID=${ACTIVE%:*}
+SIGNAL=${ACTIVE##*:}
+/usr/bin/printf 'WiFi %s %s%%\n' "$SSID" "$SIGNAL"
+EOF
+/usr/bin/chmod +x /etc/kiosk/wifi-status.sh
 
 /usr/bin/cat << 'EOF' > /etc/sway/kiosk.conf
 xwayland enable
@@ -129,22 +195,21 @@ EOF
     "exclusive": true,
     "passthrough": false,
     "modules-left": ["custom/name"],
-    "modules-center": ["custom/installed"],
-    "modules-right": ["custom/ip", "battery"],
+    "modules-right": ["custom/wifi", "custom/ip", "battery"],
     "custom/name": {
         "exec": "/usr/bin/sed -n '1p' /etc/kiosk/name",
         "interval": 3600,
         "return-type": "text",
         "tooltip": false
     },
-    "custom/installed": {
-        "exec": "/usr/bin/printf 'Installed '; /usr/bin/sed -n '1p' /etc/kiosk/installed-at",
-        "interval": 3600,
+    "custom/ip": {
+        "exec": "/etc/kiosk/ip-address.sh",
+        "interval": 10,
         "return-type": "text",
         "tooltip": false
     },
-    "custom/ip": {
-        "exec": "/etc/kiosk/ip-address.sh",
+    "custom/wifi": {
+        "exec": "/etc/kiosk/wifi-status.sh",
         "interval": 10,
         "return-type": "text",
         "tooltip": false
@@ -163,7 +228,7 @@ EOF
 }
 EOF
 
-/usr/bin/cat << 'EOF' > /etc/kiosk/waybar.css
+/usr/bin/cat << EOF > /etc/kiosk/waybar.css
 * {
     border: none;
     border-radius: 0;
@@ -173,12 +238,12 @@ EOF
 }
 
 window#waybar {
-    background: #111111;
-    color: #ffffff;
+    background: $BAR_BACKGROUND;
+    color: $BAR_COLOR;
 }
 
 #custom-name,
-#custom-installed,
+#custom-wifi,
 #custom-ip,
 #battery {
     padding: 0 12px;
