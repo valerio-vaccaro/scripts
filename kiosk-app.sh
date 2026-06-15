@@ -33,11 +33,13 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # 2. Update packages and install core Wayland infrastructure
-echo "📦 Installing Cage compositor and graphics dependencies..."
+echo "📦 Installing Sway, Waybar and graphics dependencies..."
 /usr/bin/apt update
 /usr/bin/apt install -y --no-install-recommends \
-    cage \
+    sway \
+    waybar \
     xwayland \
+    dbus-daemon \
     libpam-systemd \
     firmware-linux \
     mesa-va-drivers \
@@ -64,7 +66,10 @@ echo "📝 Creating application runner..."
 #!/bin/bash
 
 # Configure graphical applications for the kiosk session
-export GDK_BACKEND=x11
+export GDK_BACKEND=wayland,x11
+export QT_QPA_PLATFORM=wayland
+export OZONE_PLATFORM=wayland
+export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export XDG_SESSION_TYPE=wayland
 
 # Execute the configured application
@@ -74,11 +79,85 @@ EOF
 # Make the wrapper execution script executable
 /usr/bin/chmod +x /usr/local/bin/kiosk-start.sh
 
-# 5. Create the systemd service on VT1
+# 5. Configure Sway and the battery status bar
+echo "📝 Configuring Sway and Waybar..."
+/usr/bin/install -d -m 0755 /etc/kiosk /etc/sway
+
+/usr/bin/cat << 'EOF' > /etc/sway/kiosk.conf
+xwayland enable
+
+output * bg #000000 solid_color
+input * {
+    tap enabled
+}
+
+default_border none
+default_floating_border none
+gaps inner 0
+gaps outer 0
+focus_follows_mouse no
+
+for_window [app_id=".*"] border none
+for_window [class=".*"] border none
+
+exec /usr/bin/waybar --config /etc/kiosk/waybar.json --style /etc/kiosk/waybar.css
+exec /usr/local/bin/kiosk-start.sh
+EOF
+
+/usr/bin/cat << 'EOF' > /etc/kiosk/waybar.json
+{
+    "layer": "top",
+    "position": "top",
+    "height": 30,
+    "exclusive": true,
+    "passthrough": false,
+    "modules-right": ["battery"],
+    "battery": {
+        "interval": 10,
+        "states": {
+            "warning": 30,
+            "critical": 15
+        },
+        "format": "BAT {capacity}%",
+        "format-charging": "AC {capacity}%",
+        "format-plugged": "AC {capacity}%",
+        "tooltip": false
+    }
+}
+EOF
+
+/usr/bin/cat << 'EOF' > /etc/kiosk/waybar.css
+* {
+    border: none;
+    border-radius: 0;
+    font-family: sans-serif;
+    font-size: 16px;
+    min-height: 0;
+}
+
+window#waybar {
+    background: #111111;
+    color: #ffffff;
+}
+
+#battery {
+    padding: 0 12px;
+}
+
+#battery.warning {
+    background: #d97706;
+}
+
+#battery.critical {
+    background: #b91c1c;
+}
+EOF
+
+# 6. Create the systemd service on VT1
 echo "⚙️  Building direct-boot systemd kiosk target..."
 /usr/bin/cat << EOF > /etc/systemd/system/kiosk.service
 [Unit]
-Description=Wayland Application Kiosk Service
+Description=Sway Application Kiosk Service
 After=systemd-user-sessions.service systemd-logind.service network.target
 Conflicts=display-manager.service getty@tty1.service
 
@@ -88,7 +167,6 @@ User=kiosk
 PAMName=login
 WorkingDirectory=/home/kiosk
 Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID
-Environment=WLR_BACKENDS=drm
 Environment=XDG_SESSION_TYPE=wayland
 Environment=XDG_SESSION_CLASS=user
 Environment=XDG_SEAT=seat0
@@ -103,8 +181,8 @@ StandardError=journal
 UtmpIdentifier=tty1
 UtmpLevel=user
 
-# Launch Cage targeting the application startup script
-ExecStart=/usr/bin/cage -s -- /usr/local/bin/kiosk-start.sh
+# Launch Sway with a private D-Bus session
+ExecStart=/usr/bin/dbus-run-session -- /usr/bin/sway --config /etc/sway/kiosk.conf
 
 Restart=always
 RestartSec=3
@@ -113,7 +191,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-# 6. Enable system target structures
+# 7. Enable system target structures
 echo "🔄 Reloading system controllers..."
 /usr/bin/systemctl set-default multi-user.target
 /usr/bin/systemctl daemon-reload
@@ -124,7 +202,7 @@ echo " 🎉 Application kiosk setup complete!"
 echo " The system will now boot directly into $APP_PATH."
 echo "============================================="
 
-# 7. Prompt user for immediate reboot
+# 8. Prompt user for immediate reboot
 read -p "Would you like to reboot now to launch the kiosk? (y/N): " confirm
 if [[ "$confirm" =~ ^[Yy]$ ]]; then
     echo "🔄 Rebooting system..."

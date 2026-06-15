@@ -22,12 +22,14 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # 2. Update packages and install dependencies
-echo "📦 Updating package lists and installing Cage, Chromium & drivers..."
+echo "📦 Updating package lists and installing Sway, Waybar, Chromium & drivers..."
 /usr/bin/apt update
 /usr/bin/apt install -y --no-install-recommends \
-    cage \
+    sway \
+    waybar \
     chromium \
     xwayland \
+    dbus-daemon \
     libpam-systemd \
     firmware-linux \
     mesa-va-drivers \
@@ -59,26 +61,101 @@ export ELECTRON_OZONE_PLATFORM_HINT=wayland
 
 TARGET_URL=$KIOSK_URL_COMMAND
 
-# Execute Chromium in restricted Kiosk mode
+# Run Chromium as a borderless app window. Sway keeps it tiled below Waybar.
 exec /usr/bin/chromium \
-    --kiosk \
+    --app="\$TARGET_URL" \
+    --start-maximized \
     --no-first-run \
     --noerrdialogs \
+    --password-store=basic \
     --disable-infobars \
     --disable-session-crashed-bubble \
     --enable-features=UseOzonePlatform \
-    --ozone-platform=wayland \
-    "\$TARGET_URL"
+    --ozone-platform=wayland
 EOF
 
 # Make the startup script executable
 /usr/bin/chmod +x /usr/local/bin/kiosk-start.sh
 
-# 5. Create the Systemd Service File
+# 5. Configure Sway and the battery status bar
+echo "📝 Configuring Sway and Waybar..."
+/usr/bin/install -d -m 0755 /etc/kiosk /etc/sway
+
+/usr/bin/cat << 'EOF' > /etc/sway/kiosk.conf
+xwayland enable
+
+output * bg #000000 solid_color
+input * {
+    tap enabled
+}
+
+default_border none
+default_floating_border none
+gaps inner 0
+gaps outer 0
+focus_follows_mouse no
+
+for_window [app_id=".*"] border none
+for_window [class=".*"] border none
+
+exec /usr/bin/waybar --config /etc/kiosk/waybar.json --style /etc/kiosk/waybar.css
+exec /usr/local/bin/kiosk-start.sh
+EOF
+
+/usr/bin/cat << 'EOF' > /etc/kiosk/waybar.json
+{
+    "layer": "top",
+    "position": "top",
+    "height": 30,
+    "exclusive": true,
+    "passthrough": false,
+    "modules-right": ["battery"],
+    "battery": {
+        "interval": 10,
+        "states": {
+            "warning": 30,
+            "critical": 15
+        },
+        "format": "BAT {capacity}%",
+        "format-charging": "AC {capacity}%",
+        "format-plugged": "AC {capacity}%",
+        "tooltip": false
+    }
+}
+EOF
+
+/usr/bin/cat << 'EOF' > /etc/kiosk/waybar.css
+* {
+    border: none;
+    border-radius: 0;
+    font-family: sans-serif;
+    font-size: 16px;
+    min-height: 0;
+}
+
+window#waybar {
+    background: #111111;
+    color: #ffffff;
+}
+
+#battery {
+    padding: 0 12px;
+}
+
+#battery.warning {
+    background: #d97706;
+}
+
+#battery.critical {
+    background: #b91c1c;
+}
+EOF
+
+# 6. Create the systemd service
 echo "⚙️  Creating systemd kiosk service..."
 /usr/bin/cat << EOF > /etc/systemd/system/kiosk.service
 [Unit]
-Description=Wayland Kiosk Service
+Description=Sway Chromium Kiosk Service
 After=systemd-user-sessions.service systemd-logind.service network.target
 Conflicts=display-manager.service getty@tty1.service
 
@@ -88,7 +165,6 @@ User=kiosk
 PAMName=login
 WorkingDirectory=/home/kiosk
 Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID
-Environment=WLR_BACKENDS=drm
 Environment=XDG_SESSION_TYPE=wayland
 Environment=XDG_SESSION_CLASS=user
 Environment=XDG_SEAT=seat0
@@ -103,8 +179,8 @@ StandardError=journal
 UtmpIdentifier=tty1
 UtmpLevel=user
 
-# Launch Cage compositor targeting our startup script
-ExecStart=/usr/bin/cage -s -- /usr/local/bin/kiosk-start.sh
+# Launch Sway with a private D-Bus session
+ExecStart=/usr/bin/dbus-run-session -- /usr/bin/sway --config /etc/sway/kiosk.conf
 
 Restart=always
 RestartSec=3
@@ -113,7 +189,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-# 6. Enable system services
+# 7. Enable system services
 echo "🔄 Reloading systemd and enabling kiosk mode..."
 /usr/bin/systemctl set-default multi-user.target
 /usr/bin/systemctl daemon-reload
@@ -121,10 +197,10 @@ echo "🔄 Reloading systemd and enabling kiosk mode..."
 
 echo "============================================="
 echo " 🎉 Setup complete!"
-echo " The system will now boot directly into Cage (Wayland)."
+echo " The system will now boot directly into Sway with a battery bar."
 echo "============================================="
 
-# 7. Prompt user for immediate reboot
+# 8. Prompt user for immediate reboot
 read -p "Would you like to reboot now to launch the kiosk? (y/N): " confirm
 if [[ "$confirm" =~ ^[Yy]$ ]]; then
     echo "🔄 Rebooting system..."

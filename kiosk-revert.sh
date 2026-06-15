@@ -17,7 +17,11 @@ echo "Stopping and disabling the kiosk service..."
 echo "Removing kiosk service and startup files..."
 /usr/bin/rm -f \
     /etc/systemd/system/kiosk.service \
-    /usr/local/bin/kiosk-start.sh
+    /usr/local/bin/kiosk-start.sh \
+    /etc/sway/kiosk.conf \
+    /etc/kiosk/waybar.json \
+    /etc/kiosk/waybar.css
+/usr/bin/rmdir /etc/kiosk 2>/dev/null || true
 
 echo "Restoring the normal graphical boot target..."
 /usr/bin/systemctl set-default graphical.target
