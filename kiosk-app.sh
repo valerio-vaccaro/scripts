@@ -5,9 +5,11 @@ set -e
 
 if [ "$#" -lt 1 ] || [ -z "$1" ]; then
     echo "Error: No application specified." >&2
-    echo "Usage: sudo $0 <application-or-path>" >&2
+    echo "Usage: sudo $0 <application-or-path> [kiosk-name]" >&2
     exit 1
 fi
+
+KIOSK_NAME="${2:-$(/usr/bin/hostname)}"
 
 if [[ "$1" == */* ]]; then
     APP_PATH=$(/usr/bin/readlink -f -- "$1" || true)
@@ -40,6 +42,7 @@ echo "📦 Installing Sway, Waybar and graphics dependencies..."
     waybar \
     xwayland \
     dbus-daemon \
+    network-manager \
     libpam-systemd \
     firmware-linux \
     mesa-va-drivers \
@@ -82,6 +85,20 @@ EOF
 # 5. Configure Sway and the battery status bar
 echo "📝 Configuring Sway and Waybar..."
 /usr/bin/install -d -m 0755 /etc/kiosk /etc/sway
+/usr/bin/printf '%s\n' "$KIOSK_NAME" > /etc/kiosk/name
+/usr/bin/date '+%Y-%m-%d %H:%M:%S %Z' > /etc/kiosk/installed-at
+
+/usr/bin/cat << 'EOF' > /etc/kiosk/ip-address.sh
+#!/bin/bash
+
+IP=$(/usr/bin/hostname -I 2>/dev/null | /usr/bin/awk '{ print $1 }')
+if [ -z "$IP" ]; then
+    IP="offline"
+fi
+
+/usr/bin/printf 'IP %s\n' "$IP"
+EOF
+/usr/bin/chmod +x /etc/kiosk/ip-address.sh
 
 /usr/bin/cat << 'EOF' > /etc/sway/kiosk.conf
 xwayland enable
@@ -111,7 +128,27 @@ EOF
     "height": 30,
     "exclusive": true,
     "passthrough": false,
-    "modules-right": ["battery"],
+    "modules-left": ["custom/name"],
+    "modules-center": ["custom/installed"],
+    "modules-right": ["custom/ip", "battery"],
+    "custom/name": {
+        "exec": "/usr/bin/sed -n '1p' /etc/kiosk/name",
+        "interval": 3600,
+        "return-type": "text",
+        "tooltip": false
+    },
+    "custom/installed": {
+        "exec": "/usr/bin/printf 'Installed '; /usr/bin/sed -n '1p' /etc/kiosk/installed-at",
+        "interval": 3600,
+        "return-type": "text",
+        "tooltip": false
+    },
+    "custom/ip": {
+        "exec": "/etc/kiosk/ip-address.sh",
+        "interval": 10,
+        "return-type": "text",
+        "tooltip": false
+    },
     "battery": {
         "interval": 10,
         "states": {
@@ -140,6 +177,9 @@ window#waybar {
     color: #ffffff;
 }
 
+#custom-name,
+#custom-installed,
+#custom-ip,
 #battery {
     padding: 0 12px;
 }
@@ -193,6 +233,7 @@ EOF
 
 # 7. Enable system target structures
 echo "🔄 Reloading system controllers..."
+/usr/bin/systemctl enable --now NetworkManager.service
 /usr/bin/systemctl set-default multi-user.target
 /usr/bin/systemctl daemon-reload
 /usr/bin/systemctl enable kiosk.service

@@ -19,6 +19,9 @@ echo "Removing kiosk service and startup files..."
     /etc/systemd/system/kiosk.service \
     /usr/local/bin/kiosk-start.sh \
     /etc/sway/kiosk.conf \
+    /etc/kiosk/name \
+    /etc/kiosk/installed-at \
+    /etc/kiosk/ip-address.sh \
     /etc/kiosk/waybar.json \
     /etc/kiosk/waybar.css
 /usr/bin/rmdir /etc/kiosk 2>/dev/null || true
