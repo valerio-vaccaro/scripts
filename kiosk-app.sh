@@ -74,13 +74,13 @@ EOF
 # Make the wrapper execution script executable
 /usr/bin/chmod +x /usr/local/bin/kiosk-start.sh
 
-# 5. Create the Systemd Service File with direct frame buffer rendering defaults
+# 5. Create the systemd service on VT1
 echo "⚙️  Building direct-boot systemd kiosk target..."
 /usr/bin/cat << EOF > /etc/systemd/system/kiosk.service
 [Unit]
 Description=Wayland Application Kiosk Service
-After=systemd-user-sessions.service network.target sound.target systemd-udev-settle.service
-Conflicts=getty@tty1.service
+After=systemd-user-sessions.service systemd-logind.service network.target
+Conflicts=display-manager.service getty@tty1.service
 
 [Service]
 Type=simple
@@ -89,10 +89,15 @@ PAMName=login
 WorkingDirectory=/home/kiosk
 Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID
 Environment=WLR_BACKENDS=drm
-Environment=WLR_RENDERER=pixman
 Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_SESSION_CLASS=user
+Environment=XDG_SEAT=seat0
+Environment=XDG_VTNR=1
 TTYPath=/dev/tty1
-StandardInput=tty
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-force
 StandardOutput=journal
 StandardError=journal
 UtmpIdentifier=tty1
@@ -105,12 +110,12 @@ Restart=always
 RestartSec=3
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
 
 # 6. Enable system target structures
 echo "🔄 Reloading system controllers..."
-/usr/bin/systemctl set-default graphical.target
+/usr/bin/systemctl set-default multi-user.target
 /usr/bin/systemctl daemon-reload
 /usr/bin/systemctl enable kiosk.service
 

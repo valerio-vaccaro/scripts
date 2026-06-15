@@ -19,12 +19,11 @@ echo "Removing kiosk service and startup files..."
     /etc/systemd/system/kiosk.service \
     /usr/local/bin/kiosk-start.sh
 
-echo "Restoring the normal graphical boot target and TTY1 login..."
+echo "Restoring the normal graphical boot target..."
 /usr/bin/systemctl set-default graphical.target
 /usr/bin/systemctl daemon-reload
 /usr/bin/systemctl reset-failed kiosk.service 2>/dev/null || true
 /usr/bin/systemctl unmask getty@tty1.service
-/usr/bin/systemctl enable --now getty@tty1.service
 
 echo "============================================="
 echo " Kiosk configuration removed."

@@ -9,6 +9,7 @@ if [ "$#" -lt 1 ] || [ -z "$1" ]; then
 fi
 
 KIOSK_URL="$1"
+printf -v KIOSK_URL_COMMAND '%q' "$KIOSK_URL"
 
 echo "============================================="
 echo " Starting Debian 13 Wayland Kiosk Installer"
@@ -49,15 +50,14 @@ echo "🔑 Assigning hardware and rendering permissions to 'kiosk' user..."
 
 # 4. Create the Kiosk Startup Script
 echo "📝 Writing kiosk startup script..."
-/usr/bin/cat << 'EOF' > /usr/local/bin/kiosk-start.sh
+/usr/bin/cat << EOF > /usr/local/bin/kiosk-start.sh
 #!/bin/bash
 
 # Force Chromium and Electron to use native Wayland
 export OZONE_PLATFORM=wayland
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 
-# Replace the URL placeholder with the actual variable during installation
-TARGET_URL="KIOSK_URL_PLACEHOLDER"
+TARGET_URL=$KIOSK_URL_COMMAND
 
 # Execute Chromium in restricted Kiosk mode
 exec /usr/bin/chromium \
@@ -68,11 +68,8 @@ exec /usr/bin/chromium \
     --disable-session-crashed-bubble \
     --enable-features=UseOzonePlatform \
     --ozone-platform=wayland \
-    "$TARGET_URL"
+    "\$TARGET_URL"
 EOF
-
-# Inject the configured URL into the script
-/usr/bin/sed -i "s|KIOSK_URL_PLACEHOLDER|$KIOSK_URL|g" /usr/local/bin/kiosk-start.sh
 
 # Make the startup script executable
 /usr/bin/chmod +x /usr/local/bin/kiosk-start.sh
@@ -82,8 +79,8 @@ echo "⚙️  Creating systemd kiosk service..."
 /usr/bin/cat << EOF > /etc/systemd/system/kiosk.service
 [Unit]
 Description=Wayland Kiosk Service
-After=systemd-user-sessions.service network.target sound.target systemd-udev-settle.service
-Conflicts=getty@tty1.service
+After=systemd-user-sessions.service systemd-logind.service network.target
+Conflicts=display-manager.service getty@tty1.service
 
 [Service]
 Type=simple
@@ -91,8 +88,16 @@ User=kiosk
 PAMName=login
 WorkingDirectory=/home/kiosk
 Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID
+Environment=WLR_BACKENDS=drm
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_SESSION_CLASS=user
+Environment=XDG_SEAT=seat0
+Environment=XDG_VTNR=1
 TTYPath=/dev/tty1
-StandardInput=tty
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-force
 StandardOutput=journal
 StandardError=journal
 UtmpIdentifier=tty1
@@ -105,12 +110,12 @@ Restart=always
 RestartSec=3
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
 
 # 6. Enable system services
 echo "🔄 Reloading systemd and enabling kiosk mode..."
-/usr/bin/systemctl set-default graphical.target
+/usr/bin/systemctl set-default multi-user.target
 /usr/bin/systemctl daemon-reload
 /usr/bin/systemctl enable kiosk.service
 
