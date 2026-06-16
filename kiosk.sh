@@ -424,7 +424,7 @@ exec /usr/bin/waybar --config /etc/kiosk/waybar.json --style /etc/kiosk/waybar.c
 exec /usr/local/bin/kiosk-start.sh
 EOF
 
-    /usr/bin/cat > "$KIOSK_DIR/waybar.json" << 'EOF'
+    /usr/bin/cat > "$KIOSK_DIR/waybar.json" << EOF
 {
     "layer": "top",
     "position": "top",
