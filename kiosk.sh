@@ -18,7 +18,8 @@ Usage:
   sudo $SCRIPT_NAME chrome --url <url> [--name <name>] [--theme dark|bitcoin|navy] [--reboot]
   sudo $SCRIPT_NAME app --command <application-or-path> [--name <name>] [--theme dark|bitcoin|navy] [--reboot]
   sudo $SCRIPT_NAME profiles --name <name> [--theme dark|bitcoin|navy] [--reboot]
-  sudo $SCRIPT_NAME profile-add --id <id> --label <label> --pin <pin> (--url <url>|--command <command>)
+  sudo $SCRIPT_NAME profile-add --id <id> --label <label> --pin <pin> (--url <url>|--command <command>) [--fail-url <url>|--fail-command <command>]
+  sudo $SCRIPT_NAME profile-modify --id <id> [--label <label>] [--pin <pin>] [--url <url>|--command <command>] [--fail-url <url>|--fail-command <command>|--clear-fail]
   sudo $SCRIPT_NAME profile-list
   sudo $SCRIPT_NAME profile-remove --id <id>
   sudo $SCRIPT_NAME wifi --ssid <ssid> [--password <password>]
@@ -184,9 +185,83 @@ validate_profile_id() {
     [[ "$profile_id" =~ ^[A-Za-z0-9_-]+$ ]] || die "Profile id must contain only letters, numbers, underscore and dash."
 }
 
+profile_file_path() {
+    printf '%s/%s.conf\n' "$PROFILES_DIR" "$1"
+}
+
 hash_pin() {
     local pin="$1"
     /usr/bin/printf '%s' "$pin" | /usr/bin/sha256sum | /usr/bin/awk '{ print $1 }'
+}
+
+load_profile_fields() {
+    local profile_file="$1"
+    PROFILE_ID=""
+    LABEL=""
+    TYPE=""
+    URL=""
+    COMMAND=""
+    PIN_HASH=""
+    FAIL_TYPE=""
+    FAIL_TARGET=""
+    # Profile files are created by this script and sourced as shell fragments.
+    # shellcheck disable=SC1090
+    . "$profile_file"
+}
+
+write_profile_file() {
+    local profile_id="$1"
+    local label="$2"
+    local pin_hash="$3"
+    local profile_type="$4"
+    local target="$5"
+    local fail_type="${6:-}"
+    local fail_target="${7:-}"
+    local profile_file
+
+    profile_file=$(profile_file_path "$profile_id")
+    /usr/bin/install -d -m 0755 "$PROFILES_DIR"
+
+    case "$profile_type" in
+        chrome)
+            case "$fail_type" in
+                ""|chrome|command) ;;
+                *) die "Unknown fallback type '$fail_type'." ;;
+            esac
+            /usr/bin/cat > "$profile_file" << EOF
+PROFILE_ID=$(printf '%q' "$profile_id")
+LABEL=$(printf '%q' "$label")
+TYPE=chrome
+URL=$(printf '%q' "$target")
+COMMAND=
+PIN_HASH=$(printf '%q' "$pin_hash")
+FAIL_TYPE=$(printf '%q' "$fail_type")
+FAIL_TARGET=$(printf '%q' "$fail_target")
+EOF
+            ;;
+        command)
+            case "$fail_type" in
+                ""|chrome|command) ;;
+                *) die "Unknown fallback type '$fail_type'." ;;
+            esac
+            /usr/bin/cat > "$profile_file" << EOF
+PROFILE_ID=$(printf '%q' "$profile_id")
+LABEL=$(printf '%q' "$label")
+TYPE=command
+URL=
+COMMAND=$(printf '%q' "$target")
+PIN_HASH=$(printf '%q' "$pin_hash")
+FAIL_TYPE=$(printf '%q' "$fail_type")
+FAIL_TARGET=$(printf '%q' "$fail_target")
+EOF
+            ;;
+        *)
+            die "Unknown profile type '$profile_type'."
+            ;;
+    esac
+
+    /usr/bin/chown root:root "$profile_file"
+    /usr/bin/chmod 0644 "$profile_file"
 }
 
 resolve_app_command() {
@@ -246,6 +321,9 @@ write_common_files() {
     local kiosk_name="$1"
     local bar_background="$2"
     local bar_color="$3"
+    local show_logout="${4:-no}"
+    local modules_left_json='["custom/name"]'
+    local logout_module_json=''
 
     /usr/bin/install -d -m 0755 "$KIOSK_DIR" /etc/sway
     /usr/bin/printf '%s\n' "$kiosk_name" > "$KIOSK_DIR/name"
@@ -288,6 +366,43 @@ SIGNAL=${ACTIVE##*:}
 EOF
     /usr/bin/chmod +x "$KIOSK_DIR/wifi-status.sh"
 
+    /usr/bin/cat > "$KIOSK_DIR/logout.sh" << 'EOF'
+#!/bin/bash
+
+set -Eeuo pipefail
+
+APP_PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-current-app.pid"
+
+if [ ! -s "$APP_PID_FILE" ]; then
+    exit 0
+fi
+
+APP_PID=$(/usr/bin/sed -n '1p' "$APP_PID_FILE")
+case "$APP_PID" in
+    ''|*[!0-9-]*)
+        exit 1
+        ;;
+esac
+
+/usr/bin/kill -- "-$APP_PID" 2>/dev/null || /usr/bin/kill "$APP_PID" 2>/dev/null || true
+EOF
+    /usr/bin/chmod +x "$KIOSK_DIR/logout.sh"
+
+    if [ "$show_logout" = "yes" ]; then
+        modules_left_json='["custom/name", "custom/logout"]'
+        logout_module_json=$(cat <<'EOF'
+, 
+    "custom/logout": {
+        "exec": "/usr/bin/printf 'Return\\n'",
+        "interval": 3600,
+        "return-type": "text",
+        "tooltip": false,
+        "on-click": "/etc/kiosk/logout.sh"
+    }
+EOF
+)
+    fi
+
     /usr/bin/cat > "$SWAY_CONF" << 'EOF'
 xwayland enable
 
@@ -316,14 +431,14 @@ EOF
     "height": 30,
     "exclusive": true,
     "passthrough": false,
-    "modules-left": ["custom/name"],
+    "modules-left": $modules_left_json,
     "modules-right": ["custom/wifi", "custom/ip", "battery"],
     "custom/name": {
         "exec": "/usr/bin/sed -n '1p' /etc/kiosk/name",
         "interval": 3600,
         "return-type": "text",
         "tooltip": false
-    },
+    }$logout_module_json,
     "custom/ip": {
         "exec": "/etc/kiosk/ip-address.sh",
         "interval": 10,
@@ -365,10 +480,16 @@ window#waybar {
 }
 
 #custom-name,
+#custom-logout,
 #custom-wifi,
 #custom-ip,
 #battery {
     padding: 0 12px;
+}
+
+#custom-logout {
+    background: rgba(255, 255, 255, 0.12);
+    margin: 4px 0;
 }
 
 #battery.warning {
@@ -435,7 +556,7 @@ set -Eeuo pipefail
 
 PROFILES_DIR="/etc/kiosk/profiles.d"
 KIOSK_NAME_FILE="/etc/kiosk/name"
-SELECTED_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-selected-profile"
+REQUEST_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-launch-request"
 
 kiosk_title() {
     local title="Kiosk Login"
@@ -444,14 +565,6 @@ kiosk_title() {
     fi
     [ -n "$title" ] || title="Kiosk Login"
     printf '%s\n' "$title"
-}
-
-profile_type_label() {
-    case "$1" in
-        chrome) printf 'Web app\n' ;;
-        command) printf 'Application\n' ;;
-        *) printf 'Profile\n' ;;
-    esac
 }
 
 render_text_header() {
@@ -552,9 +665,20 @@ load_profile() {
     URL=""
     COMMAND=""
     PIN_HASH=""
+    FAIL_TYPE=""
+    FAIL_TARGET=""
     # Profile files are root-owned shell fragments created by kiosk.sh.
     # shellcheck disable=SC1090
     . "$path"
+}
+
+write_request() {
+    local profile_id="$1"
+    local launch_kind="$2"
+    /usr/bin/cat > "$REQUEST_FILE" << REQUEST_EOF
+PROFILE_ID=$(printf '%q' "$profile_id")
+LAUNCH_KIND=$(printf '%q' "$launch_kind")
+REQUEST_EOF
 }
 
 while true; do
@@ -569,7 +693,7 @@ while true; do
     for profile_file in "${profile_files[@]}"; do
         load_profile "$profile_file"
         [ -n "$PROFILE_ID" ] || continue
-        menu_items+=("$PROFILE_ID" "${LABEL:-$PROFILE_ID} - $(profile_type_label "$TYPE")")
+        menu_items+=("$PROFILE_ID" "${LABEL:-$PROFILE_ID}")
     done
     if [ "${#menu_items[@]}" -eq 0 ]; then
         ui_msg "No Profiles" "Configured profile files are invalid or empty."
@@ -584,12 +708,14 @@ while true; do
     load_profile "$selected_file"
     pin=$(ui_password "Profile PIN" "Enter PIN for ${LABEL:-$PROFILE_ID}") || continue
     if [ "$(hash_pin "$pin")" != "$PIN_HASH" ]; then
-        ui_msg "Access Denied" "Invalid PIN for ${LABEL:-$PROFILE_ID}."
-        sleep 1
+        if [ -n "$FAIL_TYPE" ] && [ -n "$FAIL_TARGET" ]; then
+            write_request "$PROFILE_ID" fallback
+            exit 0
+        fi
         continue
     fi
 
-    /usr/bin/printf '%s\n' "$PROFILE_ID" > "$SELECTED_FILE"
+    write_request "$PROFILE_ID" primary
     exit 0
 done
 EOF
@@ -609,10 +735,43 @@ export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export XDG_SESSION_TYPE=wayland
 
 PROFILES_DIR="/etc/kiosk/profiles.d"
-SELECTED_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-selected-profile"
+REQUEST_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-launch-request"
+APP_PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-current-app.pid"
+
+launch_target() {
+    local launch_type="$1"
+    local launch_target="$2"
+
+    case "$launch_type" in
+        chrome)
+            setsid /usr/bin/chromium \
+                --app="$launch_target" \
+                --start-maximized \
+                --no-first-run \
+                --noerrdialogs \
+                --password-store=basic \
+                --disable-infobars \
+                --disable-session-crashed-bubble \
+                --enable-features=UseOzonePlatform \
+                --ozone-platform=wayland &
+            ;;
+        command)
+            setsid /bin/bash -lc "$launch_target" &
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    app_pid=$!
+    /usr/bin/printf '%s\n' "$app_pid" > "$APP_PID_FILE"
+    wait "$app_pid" || true
+    /usr/bin/rm -f "$APP_PID_FILE"
+}
 
 launch_profile() {
     local profile_id="$1"
+    local launch_kind="${2:-primary}"
     local profile_file="$PROFILES_DIR/$profile_id.conf"
 
     [ -f "$profile_file" ] || return 1
@@ -623,34 +782,21 @@ launch_profile() {
     URL=""
     COMMAND=""
     PIN_HASH=""
+    FAIL_TYPE=""
+    FAIL_TARGET=""
     # Profile files are root-owned shell fragments created by kiosk.sh.
     # shellcheck disable=SC1090
     . "$profile_file"
 
-    case "$TYPE" in
-        chrome)
-            exec /usr/bin/chromium \
-                --app="$URL" \
-                --start-maximized \
-                --no-first-run \
-                --noerrdialogs \
-                --password-store=basic \
-                --disable-infobars \
-                --disable-session-crashed-bubble \
-                --enable-features=UseOzonePlatform \
-                --ozone-platform=wayland
-            ;;
-        command)
-            exec /bin/bash -lc "$COMMAND"
-            ;;
-        *)
-            return 1
-            ;;
+    case "$launch_kind" in
+        primary) launch_target "$TYPE" "${URL:-$COMMAND}" ;;
+        fallback) launch_target "$FAIL_TYPE" "$FAIL_TARGET" ;;
+        *) return 1 ;;
     esac
 }
 
 while true; do
-    /usr/bin/rm -f "$SELECTED_FILE"
+    /usr/bin/rm -f "$REQUEST_FILE" "$APP_PID_FILE"
     /usr/bin/foot \
         --fullscreen \
         --title "Kiosk Login" \
@@ -662,9 +808,14 @@ while true; do
         -o colors.regular7=eeeeee \
         /usr/local/bin/kiosk-profile-login.sh || sleep 2
 
-    if [ -s "$SELECTED_FILE" ]; then
-        profile_id=$(/usr/bin/sed -n '1p' "$SELECTED_FILE")
-        launch_profile "$profile_id" || sleep 2
+    if [ -s "$REQUEST_FILE" ]; then
+        PROFILE_ID=""
+        LAUNCH_KIND=""
+        # shellcheck disable=SC1090
+        . "$REQUEST_FILE"
+        [ -n "$PROFILE_ID" ] || continue
+        [ -n "$LAUNCH_KIND" ] || LAUNCH_KIND="primary"
+        launch_profile "$PROFILE_ID" "$LAUNCH_KIND" || sleep 2
     fi
 done
 EOF
@@ -806,7 +957,7 @@ install_profiles_kiosk() {
     /usr/bin/install -d -m 0755 "$PROFILES_DIR"
     write_profile_login_script
     write_profiles_start_script
-    write_common_files "$kiosk_name" "$bar_background" "$bar_color"
+    write_common_files "$kiosk_name" "$bar_background" "$bar_color" yes
     write_service "Sway Profile Kiosk Service"
     enable_kiosk_service
 
@@ -820,7 +971,9 @@ add_profile() {
     local pin="$3"
     local profile_type="$4"
     local target="$5"
-    local pin_hash profile_file
+    local fail_type="${6:-}"
+    local fail_target="${7:-}"
+    local pin_hash
 
     [ -n "$profile_id" ] || die "Profile id is required."
     [ -n "$label" ] || die "Profile label is required."
@@ -831,38 +984,63 @@ add_profile() {
     require_root
 
     pin_hash=$(hash_pin "$pin")
-    profile_file="$PROFILES_DIR/$profile_id.conf"
-    /usr/bin/install -d -m 0755 "$PROFILES_DIR"
-
-    case "$profile_type" in
-        chrome)
-            /usr/bin/cat > "$profile_file" << EOF
-PROFILE_ID=$(printf '%q' "$profile_id")
-LABEL=$(printf '%q' "$label")
-TYPE=chrome
-URL=$(printf '%q' "$target")
-COMMAND=
-PIN_HASH=$(printf '%q' "$pin_hash")
-EOF
-            ;;
-        command)
-            /usr/bin/cat > "$profile_file" << EOF
-PROFILE_ID=$(printf '%q' "$profile_id")
-LABEL=$(printf '%q' "$label")
-TYPE=command
-URL=
-COMMAND=$(printf '%q' "$target")
-PIN_HASH=$(printf '%q' "$pin_hash")
-EOF
-            ;;
-        *)
-            die "Unknown profile type '$profile_type'."
-            ;;
-    esac
-
-    /usr/bin/chown root:root "$profile_file"
-    /usr/bin/chmod 0644 "$profile_file"
+    write_profile_file "$profile_id" "$label" "$pin_hash" "$profile_type" "$target" "$fail_type" "$fail_target"
     ui_msg "Kiosk Profile" "Profile '$profile_id' saved."
+}
+
+modify_profile() {
+    local profile_id="$1"
+    local new_label="${2:-}"
+    local new_pin="${3:-}"
+    local new_type="${4:-}"
+    local new_target="${5:-}"
+    local new_fail_type="${6:-__KEEP__}"
+    local new_fail_target="${7:-__KEEP__}"
+    local profile_file label pin_hash profile_type target fail_type fail_target
+
+    [ -n "$profile_id" ] || die "Profile id is required."
+    validate_profile_id "$profile_id"
+    require_root
+
+    profile_file=$(profile_file_path "$profile_id")
+    [ -f "$profile_file" ] || die "Profile '$profile_id' does not exist."
+
+    load_profile_fields "$profile_file"
+    label="${LABEL:-$profile_id}"
+    pin_hash="${PIN_HASH:-}"
+    profile_type="${TYPE:-}"
+    if [ "$profile_type" = "chrome" ]; then
+        target="${URL:-}"
+    else
+        target="${COMMAND:-}"
+    fi
+    fail_type="${FAIL_TYPE:-}"
+    fail_target="${FAIL_TARGET:-}"
+
+    [ -n "$new_label" ] && label="$new_label"
+    [ -n "$new_pin" ] && pin_hash=$(hash_pin "$new_pin")
+    [ -n "$new_type" ] && profile_type="$new_type"
+    [ -n "$new_target" ] && target="$new_target"
+
+    if [ "$new_fail_type" != "__KEEP__" ]; then
+        fail_type="$new_fail_type"
+    fi
+    if [ "$new_fail_target" != "__KEEP__" ]; then
+        fail_target="$new_fail_target"
+    fi
+
+    [ -n "$label" ] || die "Profile label is required."
+    [ -n "$pin_hash" ] || die "Profile PIN is required."
+    [ -n "$profile_type" ] || die "Profile type is required."
+    [ -n "$target" ] || die "Profile target is required."
+
+    if [ -z "$fail_type" ] || [ -z "$fail_target" ]; then
+        fail_type=""
+        fail_target=""
+    fi
+
+    write_profile_file "$profile_id" "$label" "$pin_hash" "$profile_type" "$target" "$fail_type" "$fail_target"
+    ui_msg "Kiosk Profile" "Profile '$profile_id' updated."
 }
 
 list_profiles() {
@@ -875,15 +1053,7 @@ list_profiles() {
     fi
 
     while IFS= read -r profile_file; do
-        PROFILE_ID=""
-        LABEL=""
-        TYPE=""
-        URL=""
-        COMMAND=""
-        PIN_HASH=""
-        # Profile files are root-owned shell fragments created by kiosk.sh.
-        # shellcheck disable=SC1090
-        . "$profile_file"
+        load_profile_fields "$profile_file"
         profile_id="${PROFILE_ID:-${profile_file##*/}}"
         label="${LABEL:-$profile_id}"
         type="${TYPE:-unknown}"
@@ -892,7 +1062,11 @@ list_profiles() {
         else
             target="$COMMAND"
         fi
-        output+="$profile_id | $label | $type | $target\n"
+        if [ -n "${FAIL_TYPE:-}" ] && [ -n "${FAIL_TARGET:-}" ]; then
+            output+="$profile_id | $label | $type | $target | fallback: $FAIL_TYPE\n"
+        else
+            output+="$profile_id | $label | $type | $target\n"
+        fi
     done < <(/usr/bin/find "$PROFILES_DIR" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | /usr/bin/sort)
 
     [ -n "$output" ] || output="No profiles configured.\n"
@@ -991,6 +1165,7 @@ revert_kiosk() {
         "$SWAY_CONF" \
         "$KIOSK_DIR/name" \
         "$KIOSK_DIR/ip-address.sh" \
+        "$KIOSK_DIR/logout.sh" \
         "$KIOSK_DIR/wifi-status.sh" \
         "$KIOSK_DIR/waybar.json" \
         "$KIOSK_DIR/waybar.css"
@@ -1039,6 +1214,7 @@ interactive_profiles() {
 
 interactive_profile_add() {
     local profile_id label pin target profile_type choice
+    local fail_type="" fail_target=""
     profile_id=$(ui_input "Add Profile" "Profile id. Use letters, numbers, underscore or dash" "staff") || return
     label=$(ui_input "Add Profile" "Profile label shown at login" "$profile_id") || return
     pin=$(ui_input "Add Profile" "Profile PIN" "" yes) || return
@@ -1051,7 +1227,57 @@ interactive_profile_add() {
     else
         target=$(ui_input "Add Profile" "Command" "chromium") || return
     fi
-    add_profile "$profile_id" "$label" "$pin" "$profile_type" "$target"
+    if ui_yesno "Fallback" "Launch a fallback program when the PIN is wrong?"; then
+        choice=$(ui_menu "Fallback" "Fallback target type" \
+            chrome "Chromium URL" \
+            command "Application command") || return
+        fail_type="$choice"
+        if [ "$fail_type" = "chrome" ]; then
+            fail_target=$(ui_input "Fallback" "Fallback URL" "https://example.com") || return
+        else
+            fail_target=$(ui_input "Fallback" "Fallback command" "chromium --app=https://example.com") || return
+        fi
+    fi
+    add_profile "$profile_id" "$label" "$pin" "$profile_type" "$target" "$fail_type" "$fail_target"
+}
+
+interactive_profile_modify() {
+    local profile_id label pin target profile_type choice
+    local fail_type="__KEEP__" fail_target="__KEEP__"
+    profile_id=$(ui_input "Modify Profile" "Profile id to modify") || return
+    label=$(ui_input "Modify Profile" "New label. Leave empty to keep current" "") || return
+    pin=$(ui_input "Modify Profile" "New PIN. Leave empty to keep current" "" yes) || return
+    if ui_yesno "Modify Target" "Change the real program or URL for this profile?"; then
+        choice=$(ui_menu "Modify Target" "New target type" \
+            chrome "Chromium URL" \
+            command "Application command") || return
+        profile_type="$choice"
+        if [ "$profile_type" = "chrome" ]; then
+            target=$(ui_input "Modify Target" "New URL" "https://example.com") || return
+        else
+            target=$(ui_input "Modify Target" "New command" "chromium") || return
+        fi
+    else
+        profile_type=""
+        target=""
+    fi
+    if ui_yesno "Fallback" "Change fallback program for wrong PIN?"; then
+        if ui_yesno "Fallback" "Clear the fallback program?"; then
+            fail_type=""
+            fail_target=""
+        else
+            choice=$(ui_menu "Fallback" "Fallback target type" \
+                chrome "Chromium URL" \
+                command "Application command") || return
+            fail_type="$choice"
+            if [ "$fail_type" = "chrome" ]; then
+                fail_target=$(ui_input "Fallback" "Fallback URL" "https://example.com") || return
+            else
+                fail_target=$(ui_input "Fallback" "Fallback command" "chromium --app=https://example.com") || return
+            fi
+        fi
+    fi
+    modify_profile "$profile_id" "$label" "$pin" "$profile_type" "$target" "$fail_type" "$fail_target"
 }
 
 interactive_profile_remove() {
@@ -1082,6 +1308,7 @@ interactive_menu() {
             app "Install application kiosk" \
             profiles "Install profile login kiosk" \
             profile_add "Add a login profile" \
+            profile_modify "Modify a login profile" \
             profile_list "List login profiles" \
             profile_remove "Remove a login profile" \
             wifi "Configure WiFi" \
@@ -1095,6 +1322,7 @@ interactive_menu() {
             app) interactive_app ;;
             profiles) interactive_profiles ;;
             profile_add) interactive_profile_add ;;
+            profile_modify) interactive_profile_modify ;;
             profile_list) list_profiles ;;
             profile_remove) interactive_profile_remove ;;
             wifi) interactive_wifi ;;
@@ -1206,6 +1434,8 @@ main() {
             local pin=""
             local profile_type=""
             local target=""
+            local fail_type=""
+            local fail_target=""
             while [ "$#" -gt 0 ]; do
                 case "$1" in
                     --id) require_value "$1" "${2:-}"; profile_id="${2:-}"; shift 2 ;;
@@ -1225,11 +1455,79 @@ main() {
                         target="${2:-}"
                         shift 2
                         ;;
+                    --fail-url)
+                        require_value "$1" "${2:-}"
+                        [ -z "$fail_type" ] || die "Use only one of --fail-url or --fail-command."
+                        fail_type="chrome"
+                        fail_target="${2:-}"
+                        shift 2
+                        ;;
+                    --fail-command)
+                        require_value "$1" "${2:-}"
+                        [ -z "$fail_type" ] || die "Use only one of --fail-url or --fail-command."
+                        fail_type="command"
+                        fail_target="${2:-}"
+                        shift 2
+                        ;;
                     -h|--help) usage; exit 0 ;;
                     *) die "Unknown option '$1'." ;;
                 esac
             done
-            add_profile "$profile_id" "$label" "$pin" "$profile_type" "$target"
+            add_profile "$profile_id" "$label" "$pin" "$profile_type" "$target" "$fail_type" "$fail_target"
+            ;;
+        profile-modify)
+            shift
+            local profile_id=""
+            local label=""
+            local pin=""
+            local profile_type=""
+            local target=""
+            local fail_type="__KEEP__"
+            local fail_target="__KEEP__"
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    --id) require_value "$1" "${2:-}"; profile_id="${2:-}"; shift 2 ;;
+                    --label) require_value "$1" "${2:-}"; label="${2:-}"; shift 2 ;;
+                    --pin) require_value "$1" "${2:-}"; pin="${2:-}"; shift 2 ;;
+                    --url)
+                        require_value "$1" "${2:-}"
+                        [ -z "$profile_type" ] || die "Use only one of --url or --command."
+                        profile_type="chrome"
+                        target="${2:-}"
+                        shift 2
+                        ;;
+                    --command)
+                        require_value "$1" "${2:-}"
+                        [ -z "$profile_type" ] || die "Use only one of --url or --command."
+                        profile_type="command"
+                        target="${2:-}"
+                        shift 2
+                        ;;
+                    --fail-url)
+                        require_value "$1" "${2:-}"
+                        [ "$fail_type" = "__KEEP__" ] || die "Use only one fallback option."
+                        fail_type="chrome"
+                        fail_target="${2:-}"
+                        shift 2
+                        ;;
+                    --fail-command)
+                        require_value "$1" "${2:-}"
+                        [ "$fail_type" = "__KEEP__" ] || die "Use only one fallback option."
+                        fail_type="command"
+                        fail_target="${2:-}"
+                        shift 2
+                        ;;
+                    --clear-fail)
+                        [ "$fail_type" = "__KEEP__" ] || die "Use only one fallback option."
+                        fail_type=""
+                        fail_target=""
+                        shift
+                        ;;
+                    -h|--help) usage; exit 0 ;;
+                    *) die "Unknown option '$1'." ;;
+                esac
+            done
+            modify_profile "$profile_id" "$label" "$pin" "$profile_type" "$target" "$fail_type" "$fail_target"
             ;;
         profile-list)
             list_profiles
