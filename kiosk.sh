@@ -1212,6 +1212,30 @@ interactive_profiles() {
     install_profiles_kiosk "$name" "$theme" ask
 }
 
+interactive_select_profile() {
+    local profile_file choice
+    local menu_items=()
+
+    if [ ! -d "$PROFILES_DIR" ]; then
+        ui_msg "Profiles" "No profile directory found."
+        return 1
+    fi
+
+    while IFS= read -r profile_file; do
+        load_profile_fields "$profile_file"
+        [ -n "$PROFILE_ID" ] || continue
+        menu_items+=("$PROFILE_ID" "${LABEL:-$PROFILE_ID}")
+    done < <(/usr/bin/find "$PROFILES_DIR" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | /usr/bin/sort)
+
+    if [ "${#menu_items[@]}" -eq 0 ]; then
+        ui_msg "Profiles" "No profiles configured."
+        return 1
+    fi
+
+    choice=$(ui_menu "Profiles" "Select a profile" "${menu_items[@]}") || return 1
+    printf '%s\n' "$choice"
+}
+
 interactive_profile_add() {
     local profile_id label pin target profile_type choice
     local fail_type="" fail_target=""
@@ -1242,29 +1266,73 @@ interactive_profile_add() {
 }
 
 interactive_profile_modify() {
-    local profile_id label pin target profile_type choice
+    local profile_id label pin target profile_type choice profile_file
+    local current_label current_type current_target current_fail_type current_fail_target
     local fail_type="__KEEP__" fail_target="__KEEP__"
-    profile_id=$(ui_input "Modify Profile" "Profile id to modify") || return
-    label=$(ui_input "Modify Profile" "New label. Leave empty to keep current" "") || return
+
+    profile_id=$(interactive_select_profile) || return
+    profile_file=$(profile_file_path "$profile_id")
+    [ -f "$profile_file" ] || return
+
+    load_profile_fields "$profile_file"
+    current_label="${LABEL:-$profile_id}"
+    current_type="${TYPE:-command}"
+    if [ "$current_type" = "chrome" ]; then
+        current_target="${URL:-}"
+    else
+        current_target="${COMMAND:-}"
+    fi
+    current_fail_type="${FAIL_TYPE:-}"
+    current_fail_target="${FAIL_TARGET:-}"
+
+    label=$(ui_input "Modify Profile" "Profile label" "$current_label") || return
     pin=$(ui_input "Modify Profile" "New PIN. Leave empty to keep current" "" yes) || return
     if ui_yesno "Modify Target" "Change the real program or URL for this profile?"; then
-        choice=$(ui_menu "Modify Target" "New target type" \
+        choice=$(ui_menu "Modify Target" "Current type: $current_type. Choose target type" \
             chrome "Chromium URL" \
             command "Application command") || return
         profile_type="$choice"
         if [ "$profile_type" = "chrome" ]; then
-            target=$(ui_input "Modify Target" "New URL" "https://example.com") || return
+            if [ "$current_type" = "chrome" ]; then
+                target=$(ui_input "Modify Target" "URL" "$current_target") || return
+            else
+                target=$(ui_input "Modify Target" "URL" "https://example.com") || return
+            fi
         else
-            target=$(ui_input "Modify Target" "New command" "chromium") || return
+            if [ "$current_type" = "command" ]; then
+                target=$(ui_input "Modify Target" "Command" "$current_target") || return
+            else
+                target=$(ui_input "Modify Target" "Command" "chromium") || return
+            fi
         fi
     else
         profile_type=""
         target=""
     fi
     if ui_yesno "Fallback" "Change fallback program for wrong PIN?"; then
-        if ui_yesno "Fallback" "Clear the fallback program?"; then
-            fail_type=""
-            fail_target=""
+        if [ -n "$current_fail_type" ] && [ -n "$current_fail_target" ]; then
+            if ui_yesno "Fallback" "Clear the current fallback program?"; then
+                fail_type=""
+                fail_target=""
+            else
+                choice=$(ui_menu "Fallback" "Current fallback type: $current_fail_type. Choose target type" \
+                    chrome "Chromium URL" \
+                    command "Application command") || return
+                fail_type="$choice"
+                if [ "$fail_type" = "chrome" ]; then
+                    if [ "$current_fail_type" = "chrome" ]; then
+                        fail_target=$(ui_input "Fallback" "Fallback URL" "$current_fail_target") || return
+                    else
+                        fail_target=$(ui_input "Fallback" "Fallback URL" "https://example.com") || return
+                    fi
+                else
+                    if [ "$current_fail_type" = "command" ]; then
+                        fail_target=$(ui_input "Fallback" "Fallback command" "$current_fail_target") || return
+                    else
+                        fail_target=$(ui_input "Fallback" "Fallback command" "chromium --app=https://example.com") || return
+                    fi
+                fi
+            fi
         else
             choice=$(ui_menu "Fallback" "Fallback target type" \
                 chrome "Chromium URL" \
@@ -1282,7 +1350,7 @@ interactive_profile_modify() {
 
 interactive_profile_remove() {
     local profile_id
-    profile_id=$(ui_input "Remove Profile" "Profile id to remove") || return
+    profile_id=$(interactive_select_profile) || return
     remove_profile "$profile_id"
 }
 
@@ -1300,6 +1368,22 @@ interactive_name() {
     set_kiosk_name "$name"
 }
 
+interactive_settings_menu() {
+    local choice
+    while true; do
+        choice=$(ui_menu "Settings" "Choose a settings action" \
+            wifi "Configure WiFi" \
+            name "Change kiosk top bar name" \
+            back "Back") || return
+
+        case "$choice" in
+            wifi) interactive_wifi ;;
+            name) interactive_name ;;
+            back) return ;;
+        esac
+    done
+}
+
 interactive_menu() {
     local choice
     while true; do
@@ -1311,8 +1395,7 @@ interactive_menu() {
             profile_modify "Modify a login profile" \
             profile_list "List login profiles" \
             profile_remove "Remove a login profile" \
-            wifi "Configure WiFi" \
-            name "Change kiosk top bar name" \
+            settings "WiFi and kiosk name" \
             status "Show kiosk status" \
             revert "Remove kiosk boot configuration" \
             quit "Exit") || exit 0
@@ -1325,8 +1408,7 @@ interactive_menu() {
             profile_modify) interactive_profile_modify ;;
             profile_list) list_profiles ;;
             profile_remove) interactive_profile_remove ;;
-            wifi) interactive_wifi ;;
-            name) interactive_name ;;
+            settings) interactive_settings_menu ;;
             status) show_status ;;
             revert)
                 if ui_yesno "Revert" "Remove kiosk service and restore graphical boot?"; then
