@@ -374,16 +374,19 @@ SIGNAL=${ACTIVE##*:}
 EOF
     /usr/bin/chmod +x "$KIOSK_DIR/wifi-status.sh"
 
-    /usr/bin/cat > "$KIOSK_DIR/logout.sh" << 'EOF'
+/usr/bin/cat > "$KIOSK_DIR/logout.sh" << 'EOF'
 #!/bin/bash
 
 set -Eeuo pipefail
 
 APP_PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-current-app.pid"
+LOGOUT_FLAG_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-return-to-login"
 
 if [ ! -s "$APP_PID_FILE" ]; then
     exit 0
 fi
+
+/usr/bin/touch "$LOGOUT_FLAG_FILE"
 
 APP_PID=$(/usr/bin/sed -n '1p' "$APP_PID_FILE")
 case "$APP_PID" in
@@ -761,36 +764,49 @@ export XDG_SESSION_TYPE=wayland
 PROFILES_DIR="/etc/kiosk/profiles.d"
 REQUEST_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-launch-request"
 APP_PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-current-app.pid"
+LOGOUT_FLAG_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-return-to-login"
 
 launch_target() {
     local launch_type="$1"
     local launch_target="$2"
+    local app_pid
 
-    case "$launch_type" in
-        chrome)
-            setsid /usr/bin/chromium \
-                --app="$launch_target" \
-                --start-maximized \
-                --no-first-run \
-                --noerrdialogs \
-                --password-store=basic \
-                --disable-infobars \
-                --disable-session-crashed-bubble \
-                --enable-features=UseOzonePlatform \
-                --ozone-platform=wayland &
-            ;;
-        command)
-            setsid /bin/bash -lc "$launch_target" &
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+    /usr/bin/rm -f "$LOGOUT_FLAG_FILE"
 
-    app_pid=$!
-    /usr/bin/printf '%s\n' "$app_pid" > "$APP_PID_FILE"
-    wait "$app_pid" || true
-    /usr/bin/rm -f "$APP_PID_FILE"
+    while true; do
+        case "$launch_type" in
+            chrome)
+                setsid /usr/bin/chromium \
+                    --app="$launch_target" \
+                    --start-maximized \
+                    --no-first-run \
+                    --noerrdialogs \
+                    --password-store=basic \
+                    --disable-infobars \
+                    --disable-session-crashed-bubble \
+                    --enable-features=UseOzonePlatform \
+                    --ozone-platform=wayland &
+                ;;
+            command)
+                setsid /bin/bash -lc "$launch_target" &
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+
+        app_pid=$!
+        /usr/bin/printf '%s\n' "$app_pid" > "$APP_PID_FILE"
+        wait "$app_pid" || true
+        /usr/bin/rm -f "$APP_PID_FILE"
+
+        if [ -f "$LOGOUT_FLAG_FILE" ]; then
+            /usr/bin/rm -f "$LOGOUT_FLAG_FILE"
+            break
+        fi
+
+        sleep 2
+    done
 }
 
 launch_profile() {
