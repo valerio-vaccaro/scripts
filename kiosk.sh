@@ -572,7 +572,13 @@ kiosk_title() {
     printf '%s\n' "$title"
 }
 
+prepare_ui() {
+    unset COLUMNS LINES
+    stty sane 2>/dev/null || true
+}
+
 render_text_header() {
+    prepare_ui
     clear 2>/dev/null || true
     printf '\n'
     printf '============================================================\n'
@@ -601,6 +607,7 @@ ui_msg() {
     local text="$2"
     local backtitle
     backtitle=$(kiosk_title)
+    prepare_ui
     case "$(ui_backend)" in
         whiptail) whiptail --backtitle "$backtitle" --title "$title" --msgbox "$text" 11 78 ;;
         dialog) dialog --backtitle "$backtitle" --title "$title" --msgbox "$text" 11 78 ;;
@@ -617,6 +624,7 @@ ui_menu() {
     shift 2
     local backtitle
     backtitle=$(kiosk_title)
+    prepare_ui
     case "$(ui_backend)" in
         whiptail) whiptail --backtitle "$backtitle" --title "$title" --menu "$prompt" 20 82 11 "$@" 3>&1 1>&2 2>&3 ;;
         dialog) dialog --backtitle "$backtitle" --title "$title" --menu "$prompt" 20 82 11 "$@" 3>&1 1>&2 2>&3 ;;
@@ -645,6 +653,7 @@ ui_password() {
     local prompt="$2"
     local backtitle
     backtitle=$(kiosk_title)
+    prepare_ui
     case "$(ui_backend)" in
         whiptail) whiptail --backtitle "$backtitle" --title "$title" --passwordbox "$prompt" 11 78 3>&1 1>&2 2>&3 ;;
         dialog) dialog --backtitle "$backtitle" --title "$title" --passwordbox "$prompt" 11 78 3>&1 1>&2 2>&3 ;;
@@ -802,6 +811,7 @@ launch_profile() {
 
 while true; do
     /usr/bin/rm -f "$REQUEST_FILE" "$APP_PID_FILE"
+    sleep 0.3
     /usr/bin/foot \
         --fullscreen \
         --title "Kiosk Login" \
