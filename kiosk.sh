@@ -15,9 +15,9 @@ usage() {
     cat << EOF
 Usage:
   sudo $SCRIPT_NAME
-  sudo $SCRIPT_NAME chrome --url <url> [--name <name>] [--theme dark|bitcoin|navy] [--reboot]
-  sudo $SCRIPT_NAME app --command <application-or-path> [--name <name>] [--theme dark|bitcoin|navy] [--reboot]
-  sudo $SCRIPT_NAME profiles --name <name> [--theme dark|bitcoin|navy] [--reboot]
+  sudo $SCRIPT_NAME chrome --url <url> [--name <name>] [--theme <theme>] [--reboot]
+  sudo $SCRIPT_NAME app --command <application-or-path> [--name <name>] [--theme <theme>] [--reboot]
+  sudo $SCRIPT_NAME profiles --name <name> [--theme <theme>] [--reboot]
   sudo $SCRIPT_NAME profile-add --id <id> --label <label> --pin <pin> (--url <url>|--command <command>) [--fail-url <url>|--fail-command <command>]
   sudo $SCRIPT_NAME profile-modify --id <id> [--label <label>] [--pin <pin>] [--url <url>|--command <command>] [--fail-url <url>|--fail-command <command>|--clear-fail]
   sudo $SCRIPT_NAME profile-list
@@ -162,17 +162,22 @@ ui_menu() {
 
 theme_colors() {
     case "${1:-dark}" in
-        dark) printf '#111111 #ffffff\n' ;;
-        bitcoin) printf '#f7931a #ffffff\n' ;;
-        navy) printf '#001f3f #ffffff\n' ;;
-        *) die "Unknown theme '$1'. Use dark, bitcoin or navy." ;;
+        dark) printf '#111111 #ffffff #ffffff1f #d97706 #b91c1c\n' ;;
+        bitcoin) printf '#f7931a #ffffff #ffffff26 #b45309 #7f1d1d\n' ;;
+        navy) printf '#001f3f #ffffff #ffffff1f #2563eb #991b1b\n' ;;
+        forest) printf '#0f3d2e #f3f7f1 #ffffff1c #65a30d #b91c1c\n' ;;
+        burgundy) printf '#5b1020 #fff4f2 #ffffff1c #ea580c #991b1b\n' ;;
+        slate) printf '#243447 #f8fafc #ffffff1b #0ea5e9 #dc2626\n' ;;
+        cream) printf '#f4efe3 #2b2118 #00000014 #d97706 #b91c1c\n' ;;
+        matrix) printf '#081b12 #9ef7b8 #1aff8c22 #16a34a #dc2626\n' ;;
+        *) die "Unknown theme '$1'. Use dark, bitcoin, navy, forest, burgundy, slate, cream or matrix." ;;
     esac
 }
 
 validate_theme() {
     case "${1:-dark}" in
-        dark|bitcoin|navy) ;;
-        *) die "Unknown theme '$1'. Use dark, bitcoin or navy." ;;
+        dark|bitcoin|navy|forest|burgundy|slate|cream|matrix) ;;
+        *) die "Unknown theme '$1'. Use dark, bitcoin, navy, forest, burgundy, slate, cream or matrix." ;;
     esac
 }
 
@@ -321,7 +326,10 @@ write_common_files() {
     local kiosk_name="$1"
     local bar_background="$2"
     local bar_color="$3"
-    local show_logout="${4:-no}"
+    local module_accent="$4"
+    local battery_warning="$5"
+    local battery_critical="$6"
+    local show_logout="${7:-no}"
     local modules_left_json='["custom/name"]'
     local logout_module_json=''
 
@@ -488,16 +496,18 @@ window#waybar {
 }
 
 #custom-logout {
-    background: rgba(255, 255, 255, 0.12);
+    background: $module_accent;
     margin: 4px 0;
+    border-radius: 999px;
+    font-weight: 600;
 }
 
 #battery.warning {
-    background: #d97706;
+    background: $battery_warning;
 }
 
 #battery.critical {
-    background: #b91c1c;
+    background: $battery_critical;
 }
 EOF
 }
@@ -912,18 +922,18 @@ install_chrome_kiosk() {
     local kiosk_name="$2"
     local theme="$3"
     local reboot="$4"
-    local colors bar_background bar_color
+    local colors bar_background bar_color module_accent battery_warning battery_critical
 
     [ -n "$kiosk_url" ] || die "Chrome kiosk URL is required."
     [ -n "$kiosk_name" ] || kiosk_name=$(default_name)
     validate_theme "$theme"
-    read -r bar_background bar_color <<< "$(theme_colors "$theme")"
+    read -r bar_background bar_color module_accent battery_warning battery_critical <<< "$(theme_colors "$theme")"
 
     require_root
     install_base_packages yes
     ensure_kiosk_user
     write_chrome_start_script "$kiosk_url"
-    write_common_files "$kiosk_name" "$bar_background" "$bar_color"
+    write_common_files "$kiosk_name" "$bar_background" "$bar_color" "$module_accent" "$battery_warning" "$battery_critical"
     write_service "Sway Chromium Kiosk Service"
     enable_kiosk_service
 
@@ -936,19 +946,19 @@ install_app_kiosk() {
     local kiosk_name="$2"
     local theme="$3"
     local reboot="$4"
-    local colors bar_background bar_color app_path
+    local colors bar_background bar_color module_accent battery_warning battery_critical app_path
 
     [ -n "$requested_app" ] || die "Application command or path is required."
     app_path=$(resolve_app_command "$requested_app")
     [ -n "$kiosk_name" ] || kiosk_name=$(default_name)
     validate_theme "$theme"
-    read -r bar_background bar_color <<< "$(theme_colors "$theme")"
+    read -r bar_background bar_color module_accent battery_warning battery_critical <<< "$(theme_colors "$theme")"
 
     require_root
     install_base_packages no
     ensure_kiosk_user
     write_app_start_script "$app_path"
-    write_common_files "$kiosk_name" "$bar_background" "$bar_color"
+    write_common_files "$kiosk_name" "$bar_background" "$bar_color" "$module_accent" "$battery_warning" "$battery_critical"
     write_service "Sway Application Kiosk Service"
     enable_kiosk_service
 
@@ -960,11 +970,11 @@ install_profiles_kiosk() {
     local kiosk_name="$1"
     local theme="$2"
     local reboot="$3"
-    local bar_background bar_color
+    local bar_background bar_color module_accent battery_warning battery_critical
 
     [ -n "$kiosk_name" ] || kiosk_name=$(default_name)
     validate_theme "$theme"
-    read -r bar_background bar_color <<< "$(theme_colors "$theme")"
+    read -r bar_background bar_color module_accent battery_warning battery_critical <<< "$(theme_colors "$theme")"
 
     require_root
     install_base_packages yes
@@ -972,7 +982,7 @@ install_profiles_kiosk() {
     /usr/bin/install -d -m 0755 "$PROFILES_DIR"
     write_profile_login_script
     write_profiles_start_script
-    write_common_files "$kiosk_name" "$bar_background" "$bar_color" yes
+    write_common_files "$kiosk_name" "$bar_background" "$bar_color" "$module_accent" "$battery_warning" "$battery_critical" yes
     write_service "Sway Profile Kiosk Service"
     enable_kiosk_service
 
@@ -1201,7 +1211,12 @@ ask_theme() {
     ui_menu "Theme" "Choose top bar theme" \
         dark "Dark top bar" \
         bitcoin "Bitcoin orange top bar" \
-        navy "Navy top bar"
+        navy "Navy top bar" \
+        forest "Forest green top bar" \
+        burgundy "Burgundy red top bar" \
+        slate "Slate blue-gray top bar" \
+        cream "Cream light top bar" \
+        matrix "Matrix green top bar"
 }
 
 interactive_chrome() {
