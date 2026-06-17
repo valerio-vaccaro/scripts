@@ -537,13 +537,18 @@ write_app_start_script() {
     /usr/bin/cat > "$START_SCRIPT" << EOF
 #!/bin/bash
 
+set -Eeuo pipefail
+
 export GDK_BACKEND=wayland,x11
 export QT_QPA_PLATFORM=wayland
 export OZONE_PLATFORM=wayland
 export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export XDG_SESSION_TYPE=wayland
 
-exec $quoted_app
+while true; do
+    $quoted_app
+    sleep 2
+done
 EOF
     /usr/bin/chmod +x "$START_SCRIPT"
 }
