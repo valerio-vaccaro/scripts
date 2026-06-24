@@ -330,8 +330,8 @@ write_common_files() {
     local battery_warning="$5"
     local battery_critical="$6"
     local show_logout="${7:-no}"
-    local modules_left_json='["custom/name"]'
-    local logout_module_json=''
+    local modules_left_json='["custom/name", "custom/restart", "custom/reboot"]'
+    local extra_modules_json=''
 
     /usr/bin/install -d -m 0755 "$KIOSK_DIR" /etc/sway
     /usr/bin/printf '%s\n' "$kiosk_name" > "$KIOSK_DIR/name"
@@ -399,16 +399,78 @@ esac
 EOF
     /usr/bin/chmod +x "$KIOSK_DIR/logout.sh"
 
+/usr/bin/cat > "$KIOSK_DIR/restart-app.sh" << 'EOF'
+#!/bin/bash
+
+set -Eeuo pipefail
+
+APP_PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/kiosk-current-app.pid"
+
+if [ ! -s "$APP_PID_FILE" ]; then
+    exit 0
+fi
+
+APP_PID=$(/usr/bin/sed -n '1p' "$APP_PID_FILE")
+case "$APP_PID" in
+    ''|*[!0-9-]*)
+        exit 1
+        ;;
+esac
+
+/usr/bin/kill -- "-$APP_PID" 2>/dev/null || /usr/bin/kill "$APP_PID" 2>/dev/null || true
+EOF
+    /usr/bin/chmod +x "$KIOSK_DIR/restart-app.sh"
+
+/usr/bin/cat > "$KIOSK_DIR/reboot.sh" << 'EOF'
+#!/bin/bash
+
+exec /usr/bin/systemctl reboot
+EOF
+    /usr/bin/chmod +x "$KIOSK_DIR/reboot.sh"
+
     if [ "$show_logout" = "yes" ]; then
-        modules_left_json='["custom/name", "custom/logout"]'
-        logout_module_json=$(cat <<'EOF'
-, 
+        modules_left_json='["custom/name", "custom/restart", "custom/reboot", "custom/logout"]'
+        extra_modules_json=$(cat <<'EOF'
+,
+    "custom/restart": {
+        "exec": "/usr/bin/printf 'Restart\\n'",
+        "interval": 3600,
+        "return-type": "text",
+        "tooltip": false,
+        "on-click": "/etc/kiosk/restart-app.sh"
+    },
+    "custom/reboot": {
+        "exec": "/usr/bin/printf 'Reboot\\n'",
+        "interval": 3600,
+        "return-type": "text",
+        "tooltip": false,
+        "on-click": "/etc/kiosk/reboot.sh"
+    },
     "custom/logout": {
         "exec": "/usr/bin/printf 'Return\\n'",
         "interval": 3600,
         "return-type": "text",
         "tooltip": false,
         "on-click": "/etc/kiosk/logout.sh"
+    }
+EOF
+)
+    else
+        extra_modules_json=$(cat <<'EOF'
+,
+    "custom/restart": {
+        "exec": "/usr/bin/printf 'Restart\\n'",
+        "interval": 3600,
+        "return-type": "text",
+        "tooltip": false,
+        "on-click": "/etc/kiosk/restart-app.sh"
+    },
+    "custom/reboot": {
+        "exec": "/usr/bin/printf 'Reboot\\n'",
+        "interval": 3600,
+        "return-type": "text",
+        "tooltip": false,
+        "on-click": "/etc/kiosk/reboot.sh"
     }
 EOF
 )
@@ -449,7 +511,7 @@ EOF
         "interval": 3600,
         "return-type": "text",
         "tooltip": false
-    }$logout_module_json,
+    }$extra_modules_json,
     "custom/ip": {
         "exec": "/etc/kiosk/ip-address.sh",
         "interval": 10,
@@ -491,6 +553,8 @@ window#waybar {
 }
 
 #custom-name,
+#custom-restart,
+#custom-reboot,
 #custom-logout,
 #custom-wifi,
 #custom-ip,
@@ -498,6 +562,8 @@ window#waybar {
     padding: 0 12px;
 }
 
+#custom-restart,
+#custom-reboot,
 #custom-logout {
     background: $module_accent;
     margin: 4px 0;
@@ -543,9 +609,9 @@ EOF
 }
 
 write_app_start_script() {
-    local app_path="$1"
-    local quoted_app
-    printf -v quoted_app '%q' "$app_path"
+    local app_command="$1"
+    local quoted_command
+    printf -v quoted_command '%q' "$app_command"
 
     /usr/bin/cat > "$START_SCRIPT" << EOF
 #!/bin/bash
@@ -559,7 +625,7 @@ export ELECTRON_OZONE_PLATFORM_HINT=wayland
 export XDG_SESSION_TYPE=wayland
 
 while true; do
-    $quoted_app
+    /bin/bash -lc "$quoted_command"
     sleep 2
 done
 EOF
@@ -598,6 +664,26 @@ render_text_header() {
     printf '  %s\n' "$(kiosk_title)"
     printf '============================================================\n'
     printf '\n'
+}
+
+render_splash() {
+    prepare_ui
+    clear 2>/dev/null || true
+    printf '\n'
+    printf '                         %s\n' "$(kiosk_title)"
+    printf '\n'
+    cat <<'SPLASH_EOF'
+ _  ___           _    
+| |/ (_)         | |   
+| ' / _  ___  ___| | __
+|  < | |/ _ \/ __| |/ /
+| . \| | (_) \__ \   < 
+|_|\_\_|\___/|___/_|\_\
+SPLASH_EOF
+    printf '\n'
+    printf '                 Secure access terminal\n'
+    printf '\n'
+    sleep 2
 }
 
 ui_backend() {
@@ -707,6 +793,8 @@ PROFILE_ID=$(printf '%q' "$profile_id")
 LAUNCH_KIND=$(printf '%q' "$launch_kind")
 REQUEST_EOF
 }
+
+render_splash
 
 while true; do
     mapfile -t profile_files < <(/usr/bin/find "$PROFILES_DIR" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | /usr/bin/sort)
@@ -962,10 +1050,9 @@ install_app_kiosk() {
     local kiosk_name="$2"
     local theme="$3"
     local reboot="$4"
-    local colors bar_background bar_color module_accent battery_warning battery_critical app_path
+    local colors bar_background bar_color module_accent battery_warning battery_critical
 
     [ -n "$requested_app" ] || die "Application command or path is required."
-    app_path=$(resolve_app_command "$requested_app")
     [ -n "$kiosk_name" ] || kiosk_name=$(default_name)
     validate_theme "$theme"
     read -r bar_background bar_color module_accent battery_warning battery_critical <<< "$(theme_colors "$theme")"
@@ -973,12 +1060,12 @@ install_app_kiosk() {
     require_root
     install_base_packages no
     ensure_kiosk_user
-    write_app_start_script "$app_path"
+    write_app_start_script "$requested_app"
     write_common_files "$kiosk_name" "$bar_background" "$bar_color" "$module_accent" "$battery_warning" "$battery_critical"
     write_service "Sway Application Kiosk Service"
     enable_kiosk_service
 
-    ui_msg "Kiosk" "Application kiosk setup complete for:\n$app_path"
+    ui_msg "Kiosk" "Application kiosk setup complete for:\n$requested_app"
     maybe_reboot "$reboot"
 }
 
@@ -1207,6 +1294,8 @@ revert_kiosk() {
         "$KIOSK_DIR/name" \
         "$KIOSK_DIR/ip-address.sh" \
         "$KIOSK_DIR/logout.sh" \
+        "$KIOSK_DIR/reboot.sh" \
+        "$KIOSK_DIR/restart-app.sh" \
         "$KIOSK_DIR/wifi-status.sh" \
         "$KIOSK_DIR/waybar.json" \
         "$KIOSK_DIR/waybar.css"
